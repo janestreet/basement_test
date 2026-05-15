@@ -1,0 +1,7 @@
+(library
+ (name basement_test)
+ (public_name basement_test)
+ (inline_tests)
+ (libraries basement expect_test_helpers_base)
+ (preprocess
+  (pps ppx_jane -compare-require-explicit-locality)))
