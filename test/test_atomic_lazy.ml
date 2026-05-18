@@ -4,16 +4,20 @@ open Expect_test_helpers_base
 
 module%template
   [@mode (p, c) = ((nonportable, uncontended), (portable, contended))] Test_lazy (Lazy : sig
-    type +'a t
+  @@ portable
+    type (+'a : value_or_null) t
 
-    val from_val : 'a. 'a -> 'a t
-    val from_fun : 'a. (unit -> 'a) -> 'a t
-    val from_fun_fixed : 'a. ('a t -> 'a) -> 'a t
-    val force : 'a. 'a t -> 'a
-    val is_val : 'a. 'a t -> bool
-    val peek : 'a. 'a t -> 'a Or_null_shim.t
-    val peek_opt : 'a. 'a t -> 'a option
-    val globalize : 'a 'b. 'b -> 'a t -> 'a t
+    val from_val : ('a : value_or_null mod c). 'a @ p -> 'a t @ p
+    val from_fun : ('a : value_or_null). (unit -> 'a @ p) @ once p -> 'a t @ p
+    val from_fun_fixed : ('a : value_or_null). ('a t @ c p -> 'a @ p) @ once p -> 'a t @ p
+    val force : ('a : value_or_null). 'a t @ c local p -> 'a @ c
+    val is_val : ('a : value_or_null). 'a t @ c p -> bool
+    val peek : ('a : value). 'a t @ c p -> 'a Or_null_shim.t @ c
+    val peek_opt : ('a : value_or_null). 'a t @ c p -> 'a option @ c
+
+    val globalize
+      : ('a : value_or_null) ('b : value_or_null).
+      'b -> 'a t @ c local p -> 'a t @ c p
   end) =
 struct
   let%expect_test "from_val" =
@@ -145,7 +149,7 @@ module _ = Test_lazy (Atomic_lazy)
 module%template _ = Test_lazy [@mode portable] (struct
     open Atomic_lazy
 
-    type nonrec 'a t = 'a t
+    type nonrec ('a : value_or_null) t = 'a t
 
     let from_val = (from_val [@mode portable])
     let from_fun = (from_fun [@mode portable])
@@ -168,18 +172,18 @@ module%template Portable = struct
   let[@mode portable] unwrap = Modes.Portable.unwrap
 end
 
-module%template Generator : sig
-  type 'a t
+module%template Generator : sig @@ portable
+  type 'a t : value mod contended
 
   val run : 'a t -> int -> 'a
   val inspect : int t
 
   [@@@mode.default (p, c) = ((nonportable, uncontended), (portable, contended))]
 
-  val return : 'a. 'a -> 'a t
-  val map : 'a t -> f:('a -> 'b) -> 'b t
-  val bind : 'a t -> f:('a -> 'b t) -> 'b t
-  val recursive_union : base:'a t -> recur:('a t -> 'a t) -> 'a t
+  val return : ('a : value mod c). 'a @ p -> 'a t @ p
+  val map : 'a t @ p -> f:('a -> 'b) @ p -> 'b t @ p
+  val bind : 'a t @ p -> f:('a -> 'b t) @ p -> 'b t @ p
+  val recursive_union : base:'a t @ p -> recur:('a t -> 'a t) @ p -> 'a t @ p
 end = struct
   type 'a t = int -> 'a
 
@@ -223,10 +227,10 @@ end
 
 let%expect_test "lazy generators work" =
   let open Generator in
-  let gen = (return [@mode p]) 1 in
+  let gen @ p = (return [@mode p]) 1 in
   print_s [%message (run gen 999 : int)];
   [%expect {| ("run gen 999" 1) |}];
-  let gen =
+  let gen @ p =
     (recursive_union [@mode p])
       ~base:((return [@mode p]) ([] : int list))
       ~recur:(fun t -> bind inspect ~f:(fun n -> map t ~f:(fun l -> n :: l)))
