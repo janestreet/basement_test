@@ -2,8 +2,7 @@ open Basement
 open! Base
 open Expect_test_helpers_base
 
-module%template
-  [@mode (p, c) = ((nonportable, uncontended), (portable, contended))] Test_lazy (Lazy : sig
+module Test_lazy (Lazy : sig
     type +'a t
 
     val from_val : 'a. 'a -> 'a t
@@ -83,6 +82,36 @@ struct
     [%expect {| |}]
   ;;
 
+  let%expect_test "a raising thunk runs once and raises on every force" =
+    let test (t : int Lazy.t) =
+      require_does_raise (fun () -> Lazy.force t);
+      require_does_raise (fun () -> Lazy.force t);
+      print_s [%message (Lazy.is_val t : bool)]
+    in
+    test
+      (Lazy.from_fun (fun () ->
+         print_endline "ran";
+         failwith "from_fun"));
+    [%expect
+      {|
+      ran
+      (Failure from_fun)
+      (Failure from_fun)
+      ("Lazy.is_val t" false)
+      |}];
+    test
+      (Lazy.from_fun_fixed (fun _ ->
+         print_endline "ran";
+         failwith "from_fun_fixed"));
+    [%expect
+      {|
+      ran
+      (Failure from_fun_fixed)
+      (Failure from_fun_fixed)
+      ("Lazy.is_val t" false)
+      |}]
+  ;;
+
   let%expect_test "peek and peek_opt" =
     let t = Lazy.from_fun (fun () -> 1) in
     let result = Lazy.peek t in
@@ -142,40 +171,35 @@ end
 
 module _ = Test_lazy (Atomic_lazy)
 
-module%template _ = Test_lazy [@mode portable] (struct
+module _ = Test_lazy (struct
     open Atomic_lazy
 
     type nonrec 'a t = 'a t
 
-    let from_val = (from_val [@mode portable])
-    let from_fun = (from_fun [@mode portable])
-    let from_fun_fixed = (from_fun_fixed [@mode portable])
-    let force = (force [@mode contended])
-    let is_val = (is_val [@mode contended])
-    let peek = (peek [@mode contended])
-    let peek_opt = (peek_opt [@mode contended])
-    let globalize = (globalize [@mode contended])
+    let from_val = from_val
+    let from_fun = from_fun
+    let from_fun_fixed = from_fun_fixed
+    let force = force
+    let is_val = is_val
+    let peek = peek
+    let peek_opt = peek_opt
+    let globalize = globalize
   end)
 
 (* Example of [Atomic_lazy] being used for mode-polymorphism; the main novel result is
    that [of_lazy] and [fixed_point] below can be defined mode-polymorphically (rather than
    ad-hoc). *)
 
-module%template Portable = struct
+module Portable = struct
   let wrap = Fn.id
   let unwrap = Fn.id
-  let[@mode portable] wrap = Modes.Portable.wrap
-  let[@mode portable] unwrap = Modes.Portable.unwrap
 end
 
-module%template Generator : sig
+module Generator : sig
   type 'a t
 
   val run : 'a t -> int -> 'a
   val inspect : int t
-
-  [@@@mode.default (p, c) = ((nonportable, uncontended), (portable, contended))]
-
   val return : 'a. 'a -> 'a t
   val map : 'a t -> f:('a -> 'b) -> 'b t
   val bind : 'a t -> f:('a -> 'b t) -> 'b t
@@ -185,52 +209,43 @@ end = struct
 
   let run t n = t n
   let inspect : _ = fun n -> n
-
-  [@@@mode.default (p, c) = ((nonportable, uncontended), (portable, contended))]
-
   let shrink t : _ = fun n -> run t (n / 2)
   let return x : _ = fun _ -> x
   let map t ~f : _ = fun n -> f (run t n)
   let bind t ~f : _ = fun n -> run (f (run t n)) n
-  let of_lazy lz : _ = fun n -> run ((Atomic_lazy.force [@mode c]) lz) n
+  let of_lazy lz : _ = fun n -> run (Atomic_lazy.force lz) n
 
   let fixed_point of_generator =
     let lz =
-      (Atomic_lazy.from_fun_fixed [@mode p]) (fun lz ->
+      Atomic_lazy.from_fun_fixed (fun lz ->
         let lz' =
-          (Atomic_lazy.from_fun [@mode p]) (fun () ->
-            (Atomic_lazy.force [@mode c]) lz
-            |> Modes.Contended.cross
-            |> (Portable.unwrap [@mode p]))
+          Atomic_lazy.from_fun (fun () ->
+            Atomic_lazy.force lz |> Modes.Contended.cross |> Portable.unwrap)
         in
-        (Portable.wrap [@mode p]) (of_generator ((of_lazy [@mode p]) lz')))
+        Portable.wrap (of_generator (of_lazy lz')))
     in
-    require (not ((Atomic_lazy.is_val [@mode c]) lz));
-    let result = (Atomic_lazy.force [@mode c]) lz |> (Portable.unwrap [@mode p]) in
-    require ((Atomic_lazy.is_val [@mode c]) lz);
+    require (not (Atomic_lazy.is_val lz));
+    let result = Atomic_lazy.force lz |> Portable.unwrap in
+    require (Atomic_lazy.is_val lz);
     result
   ;;
 
   let recursive_union ~base ~recur =
-    (fixed_point [@mode p]) (fun gen ->
-      (bind [@mode p]) inspect ~f:(fun n ->
-        if n = 0 then base else recur ((shrink [@mode p]) gen)))
+    fixed_point (fun gen ->
+      bind inspect ~f:(fun n -> if n = 0 then base else recur (shrink gen)))
   ;;
 end
 
-[%%template
-[@@@mode (p, c) = ((nonportable, uncontended), (portable, contended))]
-
 let%expect_test "lazy generators work" =
   let open Generator in
-  let gen = (return [@mode p]) 1 in
+  let gen = return 1 in
   print_s [%message (run gen 999 : int)];
   [%expect {| ("run gen 999" 1) |}];
   let gen =
-    (recursive_union [@mode p])
-      ~base:((return [@mode p]) ([] : int list))
+    recursive_union
+      ~base:(return ([] : int list))
       ~recur:(fun t -> bind inspect ~f:(fun n -> map t ~f:(fun l -> n :: l)))
   in
   print_s [%message (Generator.run gen 999 : int list)];
   [%expect {| ("Generator.run gen 999" (999 499 249 124 62 31 15 7 3 1)) |}]
-;;]
+;;
