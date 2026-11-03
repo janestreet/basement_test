@@ -3,7 +3,8 @@ open! Base
 open Expect_test_helpers_base
 
 module%template
-  [@mode (p, c) = ((nonportable, uncontended), (portable, contended))] Test_lazy (Lazy : sig
+  [@mode (p, c) = ((nonportable, uncontended), (portable, contended))]
+  Test_lazy (Lazy : sig
   @@ portable
     type (+'a : value_or_null) t
 
@@ -85,6 +86,36 @@ struct
     let force2 = Lazy.force t in
     require (phys_equal force1 force2);
     [%expect {| |}]
+  ;;
+
+  let%expect_test "a raising thunk runs once and raises on every force" =
+    let test (t : int Lazy.t) =
+      require_does_raise (fun () -> Lazy.force t);
+      require_does_raise (fun () -> Lazy.force t);
+      print_s [%message (Lazy.is_val t : bool)]
+    in
+    test
+      (Lazy.from_fun (fun () ->
+         print_endline "ran";
+         failwith "from_fun"));
+    [%expect
+      {|
+      ran
+      (Failure from_fun)
+      (Failure from_fun)
+      ("Lazy.is_val t" false)
+      |}];
+    test
+      (Lazy.from_fun_fixed (fun _ ->
+         print_endline "ran";
+         failwith "from_fun_fixed"));
+    [%expect
+      {|
+      ran
+      (Failure from_fun_fixed)
+      (Failure from_fun_fixed)
+      ("Lazy.is_val t" false)
+      |}]
   ;;
 
   let%expect_test "peek and peek_opt" =

@@ -63,7 +63,12 @@ external from_bytes_unsafe
   bytes -> int -> 'a
   = "caml_input_value_from_bytes"
 
-let%test_unit ("marshaling [This]" [@tags "no-wasm"]) =
+(* Marshaling works on native, on javascript and on wasm in portable-int mode, but not on
+   wasm with the default int representation. No single tag covers that, so each test is
+   run once per tag: [no-wasm] for native and javascript, [64-bits-only] for native and
+   portable-int wasm. *)
+
+let test_marshaling_this () =
   let z = to_bytes (This "foo") [] in
   match from_bytes_unsafe z 0 with
   | This "foo" -> ()
@@ -71,12 +76,18 @@ let%test_unit ("marshaling [This]" [@tags "no-wasm"]) =
   | Null -> assert false
 ;;
 
-let%test_unit ("marshaling [Null]" [@tags "no-wasm"]) =
+let%test_unit ("marshaling [This]" [@tags "no-wasm"]) = test_marshaling_this ()
+let%test_unit ("marshaling [This]" [@tags "64-bits-only"]) = test_marshaling_this ()
+
+let test_marshaling_null () =
   let w = to_bytes Null [] in
   match from_bytes_unsafe w 0 with
   | Null -> ()
   | This _ -> assert false
 ;;
+
+let%test_unit ("marshaling [Null]" [@tags "no-wasm"]) = test_marshaling_null ()
+let%test_unit ("marshaling [Null]" [@tags "64-bits-only"]) = test_marshaling_null ()
 
 external evil : 'a or_null -> 'a = "%opaque"
 
